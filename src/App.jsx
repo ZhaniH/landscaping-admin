@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Check, Clock, AlertTriangle, X, Users, Calendar, Receipt, LayoutDashboard, Bell, Trash2, ChevronRight, Wallet, TrendingUp } from "lucide-react";
+import { Plus, Check, Clock, AlertTriangle, X, Users, Calendar, Receipt, LayoutDashboard, Bell, Trash2, ChevronRight, Wallet, TrendingUp, Inbox } from "lucide-react";
+import { supabase } from "./supabaseClient.js";
 
 const FREQUENCIES = ["Weekly", "Biweekly", "Monthly", "One-time"];
 const TERMS_OPTIONS = [
@@ -43,6 +44,8 @@ export default function LandscapeAdmin() {
   const [showJobForm, setShowJobForm] = useState(false);
   const [toast, setToast] = useState(null);
   const [pendingMessage, setPendingMessage] = useState(null);
+  const [bookingRequests, setBookingRequests] = useState([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
 
   // Load
   useEffect(() => {
@@ -70,6 +73,28 @@ export default function LandscapeAdmin() {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
   };
+
+  const loadBookingRequests = useCallback(async () => {
+    setLoadingRequests(true);
+    try {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("status", "pending")
+        .order("date", { ascending: true });
+      if (error) throw error;
+      setBookingRequests(data || []);
+    } catch (e) {
+      // If Supabase isn't reachable, just show an empty list rather than crashing the dashboard.
+      setBookingRequests([]);
+    } finally {
+      setLoadingRequests(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBookingRequests();
+  }, [loadBookingRequests]);
 
   // Derived: recompute overdue statuses live (based on due date vs today)
   const invoicesComputed = data.invoices.map((inv) => {
@@ -180,6 +205,47 @@ export default function LandscapeAdmin() {
     persist(next);
   };
 
+  const approveBooking = async (booking) => {
+    // Find an existing client by phone, or create a new one from the booking details.
+    let client = data.clients.find((c) => c.phone && c.phone.trim() === booking.phone.trim());
+    let next = data;
+    if (!client) {
+      client = {
+        id: uid(),
+        name: booking.name,
+        phone: booking.phone,
+        email: booking.email || "",
+        address: "",
+        service: booking.service || "",
+        price: 0,
+        frequency: "One-time",
+        paymentTermsDays: 14,
+      };
+      next = { ...next, clients: [...next.clients, client] };
+    }
+    const job = { id: uid(), clientId: client.id, date: booking.date, status: "scheduled" };
+    next = { ...next, jobs: [...next.jobs, job] };
+    persist(next);
+
+    try {
+      await supabase.from("bookings").update({ status: "approved" }).eq("id", booking.id);
+    } catch (e) {
+      // Local job is already created; the booking status update can be retried by refreshing.
+    }
+    setBookingRequests((prev) => prev.filter((b) => b.id !== booking.id));
+    showToast(`Approved — job scheduled for ${client.name}${client.price === 0 ? " (set their price under Clients)" : ""}`);
+  };
+
+  const declineBooking = async (booking) => {
+    try {
+      await supabase.from("bookings").update({ status: "declined" }).eq("id", booking.id);
+    } catch (e) {
+      // ignore — will just reappear on next refresh if this failed
+    }
+    setBookingRequests((prev) => prev.filter((b) => b.id !== booking.id));
+    showToast("Request declined");
+  };
+
   // ---- Stats ----
   const outstanding = invoicesComputed.filter((i) => i.status !== "paid").reduce((s, i) => s + Number(i.amount), 0);
   const overdueCount = invoicesComputed.filter((i) => i.status === "overdue").length;
@@ -209,6 +275,7 @@ export default function LandscapeAdmin() {
       <div style={{ display: "flex", gap: 4, marginBottom: "1.5rem", borderBottom: "0.5px solid var(--border)" }}>
         {[
           { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+          { id: "requests", label: `Requests${bookingRequests.length > 0 ? ` (${bookingRequests.length})` : ""}`, icon: Inbox },
           { id: "clients", label: "Clients", icon: Users },
           { id: "jobs", label: "Jobs", icon: Calendar },
           { id: "invoices", label: "Invoices", icon: Receipt },
@@ -257,6 +324,10 @@ export default function LandscapeAdmin() {
           onMarkPaid={markPaid}
           clientById={clientById}
         />
+      )}
+
+      {tab === "requests" && (
+        <RequestsTab requests={bookingRequests} loading={loadingRequests} onApprove={approveBooking} onDecline={declineBooking} onRefresh={loadBookingRequests} />
       )}
 
       {tab === "clients" && (
@@ -369,6 +440,46 @@ function Dashboard({ outstanding, overdueCount, upcomingJobs, invoices, reminder
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RequestsTab({ requests, loading, onApprove, onDecline, onRefresh }) {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+        <p style={{ fontSize: 14, color: "var(--text-secondary)", margin: 0 }}>
+          {requests.length} pending request{requests.length === 1 ? "" : "s"}
+        </p>
+        <button onClick={onRefresh} style={{ fontSize: 13, padding: "6px 12px" }}>Refresh</button>
+      </div>
+      {loading ? (
+        <p style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading...</p>
+      ) : requests.length === 0 ? (
+        <EmptyState text="No pending booking requests." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {requests.map((r) => (
+            <div key={r.id} style={{ background: "var(--surface-2)", border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+              <p style={{ fontSize: 14, fontWeight: 500, margin: 0 }}>{r.name}</p>
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "2px 0 0" }}>
+                {fmtDate(r.date)} · {r.time} · {r.service || "No service specified"}
+              </p>
+              <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "2px 0 0" }}>
+                {r.phone}{r.email ? ` · ${r.email}` : ""}
+              </p>
+              <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                <button onClick={() => onApprove(r)} style={{ fontSize: 12, padding: "6px 10px", flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                  <Check size={13} /> Approve
+                </button>
+                <button onClick={() => onDecline(r)} style={{ fontSize: 12, padding: "6px 10px", flex: 1 }}>
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
