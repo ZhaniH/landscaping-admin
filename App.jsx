@@ -24,6 +24,12 @@ const fmtDate = (dateStr) =>
 const fmtMoney = (n) => new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(Number(n) || 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+const serviceThankYouMessage = (clientName, service) =>
+  `Hi ${clientName}, thank you for choosing us for your ${service ? service.toLowerCase() : "service"} today. We appreciate your business — let us know if you need anything else.`;
+
+const paymentThankYouMessage = (clientName, amount) =>
+  `Hi ${clientName}, thank you for your payment of ${fmtMoney(amount)}. We appreciate you taking care of it and look forward to continuing to serve your property.`;
+
 const STORAGE_KEY = "landscape-admin-data";
 
 const emptyData = { clients: [], jobs: [], invoices: [], reminderLog: [] };
@@ -36,6 +42,7 @@ export default function LandscapeAdmin() {
   const [showClientForm, setShowClientForm] = useState(false);
   const [showJobForm, setShowJobForm] = useState(false);
   const [toast, setToast] = useState(null);
+  const [pendingMessage, setPendingMessage] = useState(null);
 
   // Load
   useEffect(() => {
@@ -144,12 +151,28 @@ export default function LandscapeAdmin() {
     };
     persist(next);
     showToast(`Job marked done — invoice created for ${client ? client.name : "client"}`);
+    if (client) {
+      setPendingMessage({
+        title: "Thank the client",
+        body: serviceThankYouMessage(client.name, client.service),
+      });
+    }
   };
 
   const markPaid = (invId) => {
+    const inv = data.invoices.find((i) => i.id === invId);
     const next = { ...data, invoices: data.invoices.map((i) => (i.id === invId ? { ...i, status: "paid" } : i)) };
     persist(next);
     showToast("Marked as paid");
+    if (inv) {
+      const client = clientById(inv.clientId);
+      if (client) {
+        setPendingMessage({
+          title: "Thank the client for paying",
+          body: paymentThankYouMessage(client.name, inv.amount),
+        });
+      }
+    }
   };
 
   const deleteJob = (jobId) => {
@@ -269,6 +292,9 @@ export default function LandscapeAdmin() {
 
       {showClientForm && <ClientFormModal onSave={addClient} onClose={() => setShowClientForm(false)} />}
       {showJobForm && <JobFormModal clients={data.clients} onSave={addJob} onClose={() => setShowJobForm(false)} />}
+      {pendingMessage && (
+        <MessageModal title={pendingMessage.title} body={pendingMessage.body} onClose={() => setPendingMessage(null)} />
+      )}
     </div>
   );
 }
@@ -581,6 +607,38 @@ function Modal({ title, onClose, children }) {
         {children}
       </div>
     </div>
+  );
+}
+
+function MessageModal({ title, body, onClose }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "0 0 8px" }}>
+        Copy this and send it however you'd usually message the client — text, email, or WhatsApp.
+      </p>
+      <textarea
+        readOnly
+        value={body}
+        rows={4}
+        style={{ width: "100%", fontFamily: "inherit", fontSize: 13, padding: "8px 10px", borderRadius: "var(--radius)", border: "0.5px solid var(--border-strong)", background: "var(--surface-2)", color: "var(--text-primary)", resize: "vertical" }}
+      />
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button onClick={copy} style={{ flex: 1 }}>{copied ? "Copied" : "Copy message"}</button>
+        <button onClick={onClose} style={{ flex: 1 }}>Skip</button>
+      </div>
+    </Modal>
   );
 }
 
