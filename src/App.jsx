@@ -5,13 +5,13 @@ const FREQUENCIES = ["Weekly", "Biweekly", "Monthly", "One-time"];
 const TERMS_OPTIONS = [
   { label: "Due on receipt", days: 0 },
   { label: "7 days", days: 7 },
-  { label: "15 days", days: 15 },
+  { label: "14 days", days: 14 },
   { label: "30 days", days: 30 },
 ];
 // Roughly how many times a recurring service happens per month, used to
 // estimate monthly recurring income per client. One-time jobs don't recur,
 // so they're excluded from this estimate.
-const MONTHLY_MULTIPLIER = { Weekly: 4.33, Biweekly: 2.17, Monthly: 1, "One-time": 0 };
+const MONTHLY_MULTIPLIER = { Weekly: 4.33, Biweekly: 2, Monthly: 1, "One-time": 0 };
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const addDays = (dateStr, days) => {
@@ -133,7 +133,7 @@ export default function LandscapeAdmin() {
     const job = data.jobs.find((j) => j.id === jobId);
     if (!job) return;
     const client = clientById(job.clientId);
-    const termsDays = client && client.paymentTermsDays != null ? client.paymentTermsDays : 15;
+    const termsDays = client && client.paymentTermsDays != null ? client.paymentTermsDays : 14;
     const dueDate = addDays(todayStr(), termsDays);
     const invoice = {
       id: uid(),
@@ -652,7 +652,7 @@ function Field({ label, children }) {
 }
 
 function ClientFormModal({ onSave, onClose }) {
-  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", service: "", price: "", frequency: "Biweekly", paymentTermsDays: 15 });
+  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "", service: "", price: "", frequency: "Biweekly", paymentTermsDays: 14 });
   const [error, setError] = useState("");
 
   const submit = () => {
